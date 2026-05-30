@@ -109,11 +109,18 @@ rm .env.local scripts/.env
 In your Supabase project, go to **SQL Editor** and run these files **in order**:
 
 ```
-1. supabase/migrations/001_create_tables.sql     -- Creates tables in claude_monitor schema
-2. supabase/migrations/002_expose_schema.sql      -- Exposes schema to PostgREST API
-3. supabase/migrations/004_rate_limit_events.sql  -- Adds rate limit event tracking
-4. supabase/migrations/005_remove_public_objects.sql  -- Cleanup (removes any stale public objects)
+1. supabase/migrations/001_create_tables.sql        -- Creates tables in claude_monitor schema
+2. supabase/migrations/002_expose_schema.sql         -- Exposes schema to PostgREST API
+3. supabase/migrations/004_rate_limit_events.sql     -- Adds rate limit event tracking
+4. supabase/migrations/005_remove_public_objects.sql -- Cleanup (removes any stale public objects)
+5. supabase/migrations/006_fix_advisor_warnings.sql  -- Resolves Supabase Advisor warnings
+6. supabase/migrations/007_drop_unused_tool_usage.sql -- Drops the unused tool_usage table
 ```
+
+> **Note on numbering:** There is no `003_*.sql`. An early `003` migration created
+> objects in the `public` schema; it was removed when everything moved to the
+> `claude_monitor` schema (the `005` cleanup migration handles any leftovers). The gap
+> is intentional — just run the files listed above in order.
 
 > **Important:** All tables live in the `claude_monitor` schema, NOT in `public`. After running `002_expose_schema.sql`, go to **Settings > API > Data API Settings > Exposed schemas** and verify `claude_monitor` appears in the list. If not, add it manually and restart the project from **Settings > General > Restart project**.
 
