@@ -14,6 +14,7 @@ Usage:
 import json
 import logging
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,21 @@ CLAUDE_DIR = Path(os.getenv("CLAUDE_DIR", "~/.claude")).expanduser()
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 BATCH_SIZE = 500
 DB_SCHEMA = "claude_monitor"
+
+_FRAC_RE = re.compile(r"\.(\d+)")
+
+
+def parse_iso_timestamp(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp tolerant of variable fractional-second precision.
+
+    Postgres TIMESTAMPTZ values come back from PostgREST with trailing zeros
+    trimmed (e.g. '2026-05-27T09:27:18.1936+00:00'), which Python 3.9's
+    datetime.fromisoformat() rejects — it only accepts 0, 3, or 6 fractional
+    digits. Normalize the fractional part to 6 digits and 'Z' to '+00:00' first.
+    """
+    s = value.strip().replace("Z", "+00:00")
+    s = _FRAC_RE.sub(lambda m: "." + (m.group(1) + "000000")[:6], s)
+    return datetime.fromisoformat(s)
 
 
 def extract_project_name(encoded_path: str) -> str:
@@ -333,8 +349,13 @@ def main() -> None:
         if not FORCE:
             sync = client.table("sync_state").select("*").order("id", desc=True).limit(1).execute()
             if sync.data and sync.data[0].get("last_file_mtime"):
-                last_sync_mtime = datetime.fromisoformat(sync.data[0]["last_file_mtime"])
-                log.info(f"Last sync: {last_sync_mtime}")
+                raw_mtime = sync.data[0]["last_file_mtime"]
+                try:
+                    last_sync_mtime = parse_iso_timestamp(raw_mtime)
+                    log.info(f"Last sync: {last_sync_mtime}")
+                except ValueError as e:
+                    log.warning(f"Unparseable last_file_mtime {raw_mtime!r}: {e}; reprocessing all files")
+                    last_sync_mtime = None
 
         client.table("sync_state").update(
             {"status": "running", "last_sync_at": datetime.now(timezone.utc).isoformat()}
@@ -503,7 +524,7 @@ def main() -> None:
 
         for rl in all_rate_limits:
             rl_ts = rl["timestamp"]
-            window_start = (datetime.fromisoformat(rl_ts.replace("Z", "+00:00")) - timedelta(hours=5)).isoformat()
+            window_start = (parse_iso_timestamp(rl_ts) - timedelta(hours=5)).isoformat()
             lo = bisect_left(timestamps, window_start)
             hi = bisect_right(timestamps, rl_ts)
             window = sorted_msgs[lo:hi]
