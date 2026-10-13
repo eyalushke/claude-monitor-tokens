@@ -136,9 +136,10 @@ Edit `.env.local` with your Supabase credentials:
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
-NEXT_PUBLIC_PLAN_TYPE=max5          # or: pro, max20
-NEXT_PUBLIC_PLAN_TOKEN_LIMIT=88000  # pro=44000, max5=88000, max20=220000
+NEXT_PUBLIC_PLAN_TYPE=max5          # or: pro, max20, team_premium
+NEXT_PUBLIC_PLAN_TOKEN_LIMIT=88000  # optional override; pro=44000, max5=88000, max20=220000, team_premium=88000
 NEXT_PUBLIC_PLAN_WINDOW_HOURS=5
+NEXT_PUBLIC_PLAN_MONTHLY_PRICE=     # optional override for the Costs page; defaults per plan
 ```
 
 ### Step 6: Install and Run the Dashboard
@@ -345,6 +346,7 @@ npx vercel env add SUPABASE_SERVICE_ROLE_KEY production
 npx vercel env add NEXT_PUBLIC_PLAN_TYPE production
 npx vercel env add NEXT_PUBLIC_PLAN_TOKEN_LIMIT production
 npx vercel env add NEXT_PUBLIC_PLAN_WINDOW_HOURS production
+npx vercel env add NEXT_PUBLIC_PLAN_MONTHLY_PRICE production   # optional
 npx vercel --prod
 ```
 

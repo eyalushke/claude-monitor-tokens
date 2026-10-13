@@ -32,7 +32,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDateRange } from "@/hooks/use-date-range";
-import { MODEL_PRICING } from "@/lib/constants";
+import { ACTIVE_PLAN, MODEL_PRICING } from "@/lib/constants";
 import type { DailyAggregate } from "@/lib/supabase/types";
 // ─── Sample Data ───────────────────────────────────────────────
 
@@ -183,7 +183,8 @@ export default function CostsPage() {
   const totalTokensEstimate = weekCost * 66_000;
 
   // Value analysis derived values
-  const savings = projectedMonth - 100;
+  const planPrice = ACTIVE_PLAN.monthlyPrice;
+  const savings = projectedMonth - planPrice;
   const savingsPercent = projectedMonth > 0 ? ((savings / projectedMonth) * 100) : 0;
   const costPerCommit = avgDaily > 0 ? (avgDaily / 14) : 0;
   const dailyTokens = totalTokensEstimate / (costData.length || 1);
@@ -210,7 +211,7 @@ export default function CostsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Cost Analysis</h1>
           <p className="text-xs text-muted-foreground">
-            Equivalent API pricing for your Max5 flat-rate plan ($100/mo)
+            Equivalent API pricing for your {ACTIVE_PLAN.label} flat-rate plan (${planPrice}/mo)
           </p>
         </div>
         <Badge variant="outline" className="gap-1.5 text-xs">
@@ -282,9 +283,9 @@ export default function CostsPage() {
               ${projectedMonth.toFixed(2)}
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
-              {projectedMonth > 100
-                ? `+${((projectedMonth - 100) / 100 * 100).toFixed(0)}% over Max5`
-                : `${((100 - projectedMonth) / 100 * 100).toFixed(0)}% under Max5`}
+              {projectedMonth > planPrice
+                ? `+${((projectedMonth - planPrice) / planPrice * 100).toFixed(0)}% over ${ACTIVE_PLAN.label}`
+                : `${((planPrice - projectedMonth) / planPrice * 100).toFixed(0)}% under ${ACTIVE_PLAN.label}`}
             </div>
           </CardContent>
         </Card>
@@ -297,7 +298,7 @@ export default function CostsPage() {
             Daily Cost by Model
           </CardTitle>
           <CardDescription className="text-xs">
-            Equivalent API pricing. Your Max5 plan is $100/mo flat.
+            Equivalent API pricing. Your {ACTIVE_PLAN.label} plan is ${planPrice}/mo flat.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -365,7 +366,7 @@ export default function CostsPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Plan Value</CardTitle>
             <CardDescription className="text-xs">
-              Max5 ($100/mo) vs equivalent API cost
+              {ACTIVE_PLAN.label} (${planPrice}/mo) vs equivalent API cost
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -379,20 +380,20 @@ export default function CostsPage() {
                 <div className="h-2.5 w-full rounded-full bg-muted/50 overflow-hidden">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-violet-500 to-violet-400 transition-all duration-500"
-                    style={{ width: `${Math.min((projectedMonth / Math.max(projectedMonth, 100)) * 100, 100)}%` }}
+                    style={{ width: `${Math.min((projectedMonth / Math.max(projectedMonth, planPrice)) * 100, 100)}%` }}
                   />
                 </div>
               </div>
-              {/* Max5 bar */}
+              {/* Plan bar */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-muted-foreground">Max5 plan</span>
-                  <span className="text-xs font-mono font-medium text-foreground">$100.00</span>
+                  <span className="text-xs text-muted-foreground">{ACTIVE_PLAN.label} plan</span>
+                  <span className="text-xs font-mono font-medium text-foreground">${planPrice.toFixed(2)}</span>
                 </div>
                 <div className="h-2.5 w-full rounded-full bg-muted/50 overflow-hidden">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
-                    style={{ width: `${Math.min((100 / Math.max(projectedMonth, 100)) * 100, 100)}%` }}
+                    style={{ width: `${Math.min((planPrice / Math.max(projectedMonth, planPrice)) * 100, 100)}%` }}
                   />
                 </div>
               </div>

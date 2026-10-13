@@ -14,6 +14,7 @@ import {
 import { useDateRange, type DateRange } from "@/hooks/use-date-range";
 import { useTheme } from "@/hooks/use-theme";
 import { supabaseAvailable } from "@/lib/utils";
+import { ACTIVE_PLAN } from "@/lib/constants";
 
 const pageTitles: Record<string, string> = {
   "/": "Overview",
@@ -104,7 +105,7 @@ export function Header() {
         </button>
 
         {/* Plan badge */}
-        <Badge variant="outline" className="text-xs">Max5</Badge>
+        <Badge variant="outline" className="text-xs">{ACTIVE_PLAN.label}</Badge>
       </div>
     </header>
   );

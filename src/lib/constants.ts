@@ -1,8 +1,24 @@
 export const PLAN_LIMITS = {
-  pro: { tokens: 44_000, windowHours: 5, monthlyPrice: 20 },
-  max5: { tokens: 88_000, windowHours: 5, monthlyPrice: 100 },
-  max20: { tokens: 220_000, windowHours: 5, monthlyPrice: 200 },
+  pro: { label: "Pro", tokens: 44_000, windowHours: 5, monthlyPrice: 20 },
+  max5: { label: "Max5", tokens: 88_000, windowHours: 5, monthlyPrice: 100 },
+  max20: { label: "Max20", tokens: 220_000, windowHours: 5, monthlyPrice: 200 },
+  team_premium: { label: "Team Premium", tokens: 88_000, windowHours: 5, monthlyPrice: 125 },
 } as const;
+
+export type PlanType = keyof typeof PLAN_LIMITS;
+
+// Active plan, chosen via NEXT_PUBLIC_PLAN_TYPE. The numeric env vars override the
+// plan's defaults. NEXT_PUBLIC_* must be referenced literally so Next.js inlines them.
+const envPlanType = process.env.NEXT_PUBLIC_PLAN_TYPE ?? "";
+const planType: PlanType = envPlanType in PLAN_LIMITS ? (envPlanType as PlanType) : "max5";
+
+export const ACTIVE_PLAN = {
+  type: planType,
+  label: PLAN_LIMITS[planType].label,
+  tokens: Number(process.env.NEXT_PUBLIC_PLAN_TOKEN_LIMIT) || PLAN_LIMITS[planType].tokens,
+  windowHours: Number(process.env.NEXT_PUBLIC_PLAN_WINDOW_HOURS) || PLAN_LIMITS[planType].windowHours,
+  monthlyPrice: Number(process.env.NEXT_PUBLIC_PLAN_MONTHLY_PRICE) || PLAN_LIMITS[planType].monthlyPrice,
+};
 
 export const MODEL_COLORS: Record<string, string> = {
   "claude-opus": "#8B5CF6",

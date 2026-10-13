@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDateRange } from "@/hooks/use-date-range";
-import { TOKEN_COLORS, PLAN_LIMITS, getModelColor, getModelShortName, estimateCost as estimateCostRaw } from "@/lib/constants";
+import { TOKEN_COLORS, ACTIVE_PLAN, getModelColor, getModelShortName, estimateCost as estimateCostRaw } from "@/lib/constants";
 import { formatNumber, supabaseAvailable } from "@/lib/utils";
 import type { DailyAggregate } from "@/lib/supabase/types";
 
@@ -102,7 +102,7 @@ export default function OverviewV2Page() {
         setThrottleCount(totalThrottles);
 
         // Gauge + reset countdown
-        const windowLimit = PLAN_LIMITS.max5.tokens;
+        const windowLimit = ACTIVE_PLAN.tokens;
         const msgs = recentMessages ?? [];
         const recentTokens = msgs.reduce((sum: number, m: any) => sum + m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_creation_tokens, 0);
         setGaugePct(Math.min(100, Math.round((recentTokens / windowLimit) * 100)));
@@ -241,7 +241,7 @@ export default function OverviewV2Page() {
     fetchData();
   }, [dateStr]);
 
-  const windowLimit = PLAN_LIMITS.max5.tokens;
+  const windowLimit = ACTIVE_PLAN.tokens;
   const remaining = Math.max(0, windowLimit - gaugeUsed);
 
   const statusIcon = anthropicStatus.indicator === "none"
