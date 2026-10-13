@@ -20,7 +20,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 
@@ -327,6 +327,73 @@ def upsert_batch(client: Any, table: str, rows: list[dict[str, Any]], conflict_c
     return count
 
 
+def find_claude_config() -> Optional[Path]:
+    """Locate Claude Code's global config (~/.claude.json, or inside CLAUDE_CONFIG_DIR)."""
+    candidates = []
+    if os.getenv("CLAUDE_CONFIG_FILE"):
+        candidates.append(Path(os.environ["CLAUDE_CONFIG_FILE"]).expanduser())
+    if os.getenv("CLAUDE_CONFIG_DIR"):
+        candidates.append(Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser() / ".claude.json")
+    candidates += [CLAUDE_DIR / ".claude.json", Path.home() / ".claude.json"]
+    return next((p for p in candidates if p.is_file()), None)
+
+
+def map_plan_type(organization_type: str, seat_tier: str, rate_limit_tier: str) -> Optional[str]:
+    """Map Claude Code's account fields to a dashboard plan key (see PLAN_LIMITS in constants.ts)."""
+    org, seat, tier = organization_type.lower(), seat_tier.lower(), rate_limit_tier.lower()
+    if org == "claude_team" or seat.startswith("team_"):
+        return "team_premium" if "premium" in seat else "team_standard"
+    if org == "claude_max" or "max" in tier:
+        return "max20" if "20x" in tier else "max5"
+    if org == "claude_pro" or "pro" in tier:
+        return "pro"
+    return None
+
+
+def detect_plan() -> Optional[dict[str, Any]]:
+    """Read the plan from the account profile Claude Code caches locally.
+
+    Only plan fields are read; identity fields (email, names, uuids) are ignored.
+    """
+    config_path = find_claude_config()
+    if not config_path:
+        log.warning("Claude config (.claude.json) not found; plan not detected")
+        return None
+    try:
+        account = json.loads(config_path.read_text(encoding="utf-8")).get("oauthAccount") or {}
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning(f"Could not read {config_path}: {e}; plan not detected")
+        return None
+
+    organization_type = account.get("organizationType") or ""
+    seat_tier = account.get("seatTier") or ""
+    rate_limit_tier = account.get("userRateLimitTier") or account.get("organizationRateLimitTier") or ""
+    plan_type = map_plan_type(organization_type, seat_tier, rate_limit_tier)
+    if not plan_type:
+        log.warning(f"Unrecognised plan (organizationType={organization_type!r}, seatTier={seat_tier!r})")
+    return {
+        "plan_type": plan_type,
+        "organization_type": organization_type or None,
+        "seat_tier": seat_tier or None,
+        "rate_limit_tier": rate_limit_tier or None,
+        "plan_detected_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def record_plan(client: Any) -> None:
+    """Store the detected plan on sync_state; never fails the sync (e.g. before migration 008)."""
+    plan = detect_plan()
+    if not plan:
+        return
+    log.info(f"Detected plan: {plan['plan_type']} (org={plan['organization_type']}, seat={plan['seat_tier']})")
+    if client is None:
+        return
+    try:
+        client.table("sync_state").update(plan).eq("id", 1).execute()
+    except Exception as e:
+        log.warning(f"Could not store plan on sync_state (has migration 008 been applied?): {e}")
+
+
 def fetch_messages_for_date(client: Any, date_str: str) -> list[dict[str, Any]]:
     """Fetch every stored message for one UTC day, paginating past the PostgREST row cap."""
     start = f"{date_str}T00:00:00+00:00"
@@ -453,6 +520,9 @@ def main() -> None:
         rebuild_all_aggregates(client)
         log.info("Aggregate rebuild complete!")
         return
+
+    # Refresh the detected plan every run, even when no session files changed
+    record_plan(client)
 
     if not DRY_RUN:
         if not FORCE:

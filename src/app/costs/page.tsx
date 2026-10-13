@@ -32,7 +32,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDateRange } from "@/hooks/use-date-range";
-import { ACTIVE_PLAN, MODEL_PRICING } from "@/lib/constants";
+import { MODEL_PRICING } from "@/lib/constants";
+import { usePlan } from "@/hooks/use-plan";
 import type { DailyAggregate } from "@/lib/supabase/types";
 // ─── Sample Data ───────────────────────────────────────────────
 
@@ -121,6 +122,7 @@ function aggregateCosts(rows: DailyAggregate[]): CostRow[] {
 
 export default function CostsPage() {
   const { dateStr } = useDateRange();
+  const plan = usePlan();
   const [costData, setCostData] = useState<CostRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
@@ -183,7 +185,7 @@ export default function CostsPage() {
   const totalTokensEstimate = weekCost * 66_000;
 
   // Value analysis derived values
-  const planPrice = ACTIVE_PLAN.monthlyPrice;
+  const planPrice = plan.monthlyPrice;
   const savings = projectedMonth - planPrice;
   const savingsPercent = projectedMonth > 0 ? ((savings / projectedMonth) * 100) : 0;
   const costPerCommit = avgDaily > 0 ? (avgDaily / 14) : 0;
@@ -211,7 +213,7 @@ export default function CostsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Cost Analysis</h1>
           <p className="text-xs text-muted-foreground">
-            Equivalent API pricing for your {ACTIVE_PLAN.label} flat-rate plan (${planPrice}/mo)
+            Equivalent API pricing for your {plan.label} flat-rate plan (${planPrice}/mo)
           </p>
         </div>
         <Badge variant="outline" className="gap-1.5 text-xs">
@@ -284,8 +286,8 @@ export default function CostsPage() {
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
               {projectedMonth > planPrice
-                ? `+${((projectedMonth - planPrice) / planPrice * 100).toFixed(0)}% over ${ACTIVE_PLAN.label}`
-                : `${((planPrice - projectedMonth) / planPrice * 100).toFixed(0)}% under ${ACTIVE_PLAN.label}`}
+                ? `+${((projectedMonth - planPrice) / planPrice * 100).toFixed(0)}% over ${plan.label}`
+                : `${((planPrice - projectedMonth) / planPrice * 100).toFixed(0)}% under ${plan.label}`}
             </div>
           </CardContent>
         </Card>
@@ -298,7 +300,7 @@ export default function CostsPage() {
             Daily Cost by Model
           </CardTitle>
           <CardDescription className="text-xs">
-            Equivalent API pricing. Your {ACTIVE_PLAN.label} plan is ${planPrice}/mo flat.
+            Equivalent API pricing. Your {plan.label} plan is ${planPrice}/mo flat.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -366,7 +368,7 @@ export default function CostsPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Plan Value</CardTitle>
             <CardDescription className="text-xs">
-              {ACTIVE_PLAN.label} (${planPrice}/mo) vs equivalent API cost
+              {plan.label} (${planPrice}/mo) vs equivalent API cost
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -387,7 +389,7 @@ export default function CostsPage() {
               {/* Plan bar */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-muted-foreground">{ACTIVE_PLAN.label} plan</span>
+                  <span className="text-xs text-muted-foreground">{plan.label} plan</span>
                   <span className="text-xs font-mono font-medium text-foreground">${planPrice.toFixed(2)}</span>
                 </div>
                 <div className="h-2.5 w-full rounded-full bg-muted/50 overflow-hidden">

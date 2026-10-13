@@ -16,8 +16,9 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDateRange } from "@/hooks/use-date-range";
-import { TOKEN_COLORS, ACTIVE_PLAN, getModelColor, getModelShortName, estimateCost as estimateCostRaw } from "@/lib/constants";
+import { TOKEN_COLORS, getModelColor, getModelShortName, estimateCost as estimateCostRaw } from "@/lib/constants";
 import { formatNumber, supabaseAvailable } from "@/lib/utils";
+import { usePlan } from "@/hooks/use-plan";
 import type { DailyAggregate } from "@/lib/supabase/types";
 
 const PROJECT_COLORS = ["#8B5CF6", "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#EC4899", "#06B6D4", "#84CC16"];
@@ -29,10 +30,10 @@ interface AnthropicStatus {
 
 export default function OverviewV2Page() {
   const { dateStr } = useDateRange();
+  const plan = usePlan();
   const [loading, setLoading] = useState(true);
   const [usingSample, setUsingSample] = useState(false);
 
-  const [gaugePct, setGaugePct] = useState(0);
   const [gaugeUsed, setGaugeUsed] = useState(0);
   const [burnRate, setBurnRate] = useState(0);
   const [resetMinutes, setResetMinutes] = useState<number | null>(null);
@@ -102,10 +103,8 @@ export default function OverviewV2Page() {
         setThrottleCount(totalThrottles);
 
         // Gauge + reset countdown
-        const windowLimit = ACTIVE_PLAN.tokens;
         const msgs = recentMessages ?? [];
         const recentTokens = msgs.reduce((sum: number, m: any) => sum + m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_creation_tokens, 0);
-        setGaugePct(Math.min(100, Math.round((recentTokens / windowLimit) * 100)));
         setGaugeUsed(recentTokens);
 
         if (msgs.length > 0) {
@@ -207,7 +206,7 @@ export default function OverviewV2Page() {
 
     function applySampleData() {
       setUsingSample(true);
-      setGaugePct(62); setGaugeUsed(54500); setBurnRate(18000); setCostToday(3.07); setCostPeriod(21.40);
+      setGaugeUsed(54500); setBurnRate(18000); setCostToday(3.07); setCostPeriod(21.40);
       setSessionsToday(7); setMessagesToday(342); setToolsToday(189); setThrottleCount(24); setResetMinutes(127);
       setTimelineData([
         { date: "May 19", input: 4200, output: 18500, cacheRead: 82000, cacheCreation: 12000 },
@@ -241,7 +240,8 @@ export default function OverviewV2Page() {
     fetchData();
   }, [dateStr]);
 
-  const windowLimit = ACTIVE_PLAN.tokens;
+  const windowLimit = plan.tokens;
+  const gaugePct = Math.min(100, Math.round((gaugeUsed / windowLimit) * 100));
   const remaining = Math.max(0, windowLimit - gaugeUsed);
 
   const statusIcon = anthropicStatus.indicator === "none"

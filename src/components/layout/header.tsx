@@ -14,7 +14,7 @@ import {
 import { useDateRange, type DateRange } from "@/hooks/use-date-range";
 import { useTheme } from "@/hooks/use-theme";
 import { supabaseAvailable } from "@/lib/utils";
-import { ACTIVE_PLAN } from "@/lib/constants";
+import { usePlan } from "@/hooks/use-plan";
 
 const pageTitles: Record<string, string> = {
   "/": "Overview",
@@ -36,6 +36,7 @@ const rangeLabels: Record<DateRange, string> = {
 export function Header() {
   const pathname = usePathname();
   const { range, setRange } = useDateRange();
+  const plan = usePlan();
   const { theme, toggleTheme } = useTheme();
   const [lastSync, setLastSync] = useState<string>("—");
 
@@ -105,7 +106,7 @@ export function Header() {
         </button>
 
         {/* Plan badge */}
-        <Badge variant="outline" className="text-xs">{ACTIVE_PLAN.label}</Badge>
+        <Badge variant="outline" className="text-xs">{plan.label}</Badge>
       </div>
     </header>
   );
