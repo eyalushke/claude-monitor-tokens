@@ -1,8 +1,40 @@
 export const PLAN_LIMITS = {
-  pro: { tokens: 44_000, windowHours: 5, monthlyPrice: 20 },
-  max5: { tokens: 88_000, windowHours: 5, monthlyPrice: 100 },
-  max20: { tokens: 220_000, windowHours: 5, monthlyPrice: 200 },
+  pro: { label: "Pro", tokens: 44_000, windowHours: 5, monthlyPrice: 20 },
+  max5: { label: "Max5", tokens: 88_000, windowHours: 5, monthlyPrice: 100 },
+  max20: { label: "Max20", tokens: 220_000, windowHours: 5, monthlyPrice: 200 },
+  team_standard: { label: "Team Standard", tokens: 55_000, windowHours: 5, monthlyPrice: 125 },
+  team_premium: { label: "Team Premium", tokens: 88_000, windowHours: 5, monthlyPrice: 150 },
 } as const;
+
+export type PlanType = keyof typeof PLAN_LIMITS;
+
+export interface ResolvedPlan {
+  type: PlanType;
+  label: string;
+  tokens: number;
+  windowHours: number;
+  monthlyPrice: number;
+}
+
+function isPlanType(value: string | null | undefined): value is PlanType {
+  return !!value && value in PLAN_LIMITS;
+}
+
+// Resolve the active plan. Precedence: plan detected by ingest.py (sync_state.plan_type)
+// -> NEXT_PUBLIC_PLAN_TYPE -> max5. The numeric env vars override the plan's defaults.
+// NEXT_PUBLIC_* must be referenced literally so Next.js inlines them.
+export function resolvePlan(detectedPlanType?: string | null): ResolvedPlan {
+  const envPlanType = process.env.NEXT_PUBLIC_PLAN_TYPE;
+  const type: PlanType = isPlanType(detectedPlanType) ? detectedPlanType : isPlanType(envPlanType) ? envPlanType : "max5";
+  const base = PLAN_LIMITS[type];
+  return {
+    type,
+    label: base.label,
+    tokens: Number(process.env.NEXT_PUBLIC_PLAN_TOKEN_LIMIT) || base.tokens,
+    windowHours: Number(process.env.NEXT_PUBLIC_PLAN_WINDOW_HOURS) || base.windowHours,
+    monthlyPrice: Number(process.env.NEXT_PUBLIC_PLAN_MONTHLY_PRICE) || base.monthlyPrice,
+  };
+}
 
 export const MODEL_COLORS: Record<string, string> = {
   "claude-opus": "#8B5CF6",

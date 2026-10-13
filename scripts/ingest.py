@@ -9,6 +9,7 @@ Usage:
     python3 ingest.py              # Full ingestion
     python3 ingest.py --dry-run    # Parse only, no DB writes
     python3 ingest.py --force      # Re-process all files regardless of mtime
+    python3 ingest.py --rebuild-aggregates  # Recompute all daily aggregates from the messages table
 """
 
 import json
@@ -19,7 +20,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 
@@ -34,10 +35,17 @@ load_dotenv(Path(__file__).parent / ".env")
 
 DRY_RUN = "--dry-run" in sys.argv
 FORCE = "--force" in sys.argv
+REBUILD_AGGREGATES = "--rebuild-aggregates" in sys.argv
 CLAUDE_DIR = Path(os.getenv("CLAUDE_DIR", "~/.claude")).expanduser()
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 BATCH_SIZE = 500
+# Must not exceed the PostgREST max-rows setting (Supabase default: 1000)
+PAGE_SIZE = 1000
 DB_SCHEMA = "claude_monitor"
+AGG_MESSAGE_COLUMNS = (
+    "id,session_id,timestamp,model,input_tokens,output_tokens,cache_read_tokens,"
+    "cache_creation_tokens,tool_names,tool_count,web_search_requests"
+)
 
 _FRAC_RE = re.compile(r"\.(\d+)")
 
@@ -319,6 +327,167 @@ def upsert_batch(client: Any, table: str, rows: list[dict[str, Any]], conflict_c
     return count
 
 
+def find_claude_config() -> Optional[Path]:
+    """Locate Claude Code's global config (~/.claude.json, or inside CLAUDE_CONFIG_DIR)."""
+    candidates = []
+    if os.getenv("CLAUDE_CONFIG_FILE"):
+        candidates.append(Path(os.environ["CLAUDE_CONFIG_FILE"]).expanduser())
+    if os.getenv("CLAUDE_CONFIG_DIR"):
+        candidates.append(Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser() / ".claude.json")
+    candidates += [CLAUDE_DIR / ".claude.json", Path.home() / ".claude.json"]
+    return next((p for p in candidates if p.is_file()), None)
+
+
+def map_plan_type(organization_type: str, seat_tier: str, rate_limit_tier: str) -> Optional[str]:
+    """Map Claude Code's account fields to a dashboard plan key (see PLAN_LIMITS in constants.ts)."""
+    org, seat, tier = organization_type.lower(), seat_tier.lower(), rate_limit_tier.lower()
+    if org == "claude_team" or seat.startswith("team_"):
+        return "team_premium" if "premium" in seat else "team_standard"
+    if org == "claude_max" or "max" in tier:
+        return "max20" if "20x" in tier else "max5"
+    if org == "claude_pro" or "pro" in tier:
+        return "pro"
+    return None
+
+
+def detect_plan() -> Optional[dict[str, Any]]:
+    """Read the plan from the account profile Claude Code caches locally.
+
+    Only plan fields are read; identity fields (email, names, uuids) are ignored.
+    """
+    config_path = find_claude_config()
+    if not config_path:
+        log.warning("Claude config (.claude.json) not found; plan not detected")
+        return None
+    try:
+        account = json.loads(config_path.read_text(encoding="utf-8")).get("oauthAccount") or {}
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning(f"Could not read {config_path}: {e}; plan not detected")
+        return None
+
+    organization_type = account.get("organizationType") or ""
+    seat_tier = account.get("seatTier") or ""
+    rate_limit_tier = account.get("userRateLimitTier") or account.get("organizationRateLimitTier") or ""
+    plan_type = map_plan_type(organization_type, seat_tier, rate_limit_tier)
+    if not plan_type:
+        log.warning(f"Unrecognised plan (organizationType={organization_type!r}, seatTier={seat_tier!r})")
+    return {
+        "plan_type": plan_type,
+        "organization_type": organization_type or None,
+        "seat_tier": seat_tier or None,
+        "rate_limit_tier": rate_limit_tier or None,
+        "plan_detected_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def record_plan(client: Any) -> None:
+    """Store the detected plan on sync_state; never fails the sync (e.g. before migration 008)."""
+    plan = detect_plan()
+    if not plan:
+        return
+    log.info(f"Detected plan: {plan['plan_type']} (org={plan['organization_type']}, seat={plan['seat_tier']})")
+    if client is None:
+        return
+    try:
+        client.table("sync_state").update(plan).eq("id", 1).execute()
+    except Exception as e:
+        log.warning(f"Could not store plan on sync_state (has migration 008 been applied?): {e}")
+
+
+def fetch_messages_for_date(client: Any, date_str: str) -> list[dict[str, Any]]:
+    """Fetch every stored message for one UTC day, paginating past the PostgREST row cap."""
+    start = f"{date_str}T00:00:00+00:00"
+    end = f"{(datetime.fromisoformat(date_str) + timedelta(days=1)).date().isoformat()}T00:00:00+00:00"
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = (
+            client.table("messages").select(AGG_MESSAGE_COLUMNS)
+            .gte("timestamp", start).lt("timestamp", end)
+            .order("id").range(offset, offset + PAGE_SIZE - 1)
+            .execute().data
+        )
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            return rows
+        offset += PAGE_SIZE
+
+
+def fetch_session_projects(client: Any, session_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Map session id -> {"project_name": ...} for the given sessions."""
+    ids = sorted(session_ids)
+    session_map: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(ids), 50):
+        chunk = ids[i : i + 50]
+        for row in client.table("sessions").select("id,project_name").in_("id", chunk).execute().data:
+            session_map[row["id"]] = row
+    return session_map
+
+
+def delete_stale_keys(client: Any, table: str, date_str: str, key_cols: list[str], keep: set[tuple]) -> int:
+    """Delete rows for a date whose key is not in the freshly recomputed set."""
+    existing = client.table(table).select(",".join(["id"] + key_cols)).eq("date", date_str).execute().data
+    stale_ids = [r["id"] for r in existing if tuple(r[c] for c in key_cols) not in keep]
+    if stale_ids:
+        client.table(table).delete().in_("id", stale_ids).execute()
+    return len(stale_ids)
+
+
+def recompute_aggregates_for_dates(client: Any, dates: set[str]) -> None:
+    """Rebuild daily + tool aggregates for the given dates from the full messages table.
+
+    Each run only parses files modified since the last sync, so aggregates computed from
+    that batch alone would overwrite a day's totals with a partial count. Recomputing from
+    the DB keeps every touched day complete, even when its messages span several runs.
+    """
+    for date_str in sorted(dates):
+        messages = fetch_messages_for_date(client, date_str)
+        session_map = fetch_session_projects(client, {m["session_id"] for m in messages})
+        # Normalise DB rows to the shape compute_daily_aggregates expects
+        for m in messages:
+            m["tool_names"] = m.get("tool_names") or []
+        daily_aggs, tool_aggs = compute_daily_aggregates(messages, session_map)
+
+        if DRY_RUN:
+            old = client.table("daily_aggregates").select("message_count").eq("date", date_str).execute().data
+            old_count = sum(r["message_count"] for r in old)
+            new_count = sum(r["message_count"] for r in daily_aggs)
+            marker = "" if old_count == new_count else "  <-- changed"
+            log.info(f"{date_str}: messages {old_count} -> {new_count}{marker}")
+            continue
+
+        upsert_batch(client, "daily_aggregates", daily_aggs, "date,project_name,model")
+        upsert_batch(client, "tool_daily_aggregates", tool_aggs, "date,tool_name")
+        stale = delete_stale_keys(
+            client, "daily_aggregates", date_str, ["project_name", "model"],
+            {(d["project_name"], d["model"]) for d in daily_aggs},
+        )
+        stale += delete_stale_keys(
+            client, "tool_daily_aggregates", date_str, ["tool_name"],
+            {(t["tool_name"],) for t in tool_aggs},
+        )
+        log.info(
+            f"{date_str}: {len(messages)} messages -> {len(daily_aggs)} daily aggs, "
+            f"{len(tool_aggs)} tool aggs ({stale} stale rows removed)"
+        )
+
+
+def rebuild_all_aggregates(client: Any) -> None:
+    """Recompute aggregates for every day from the first stored message through today (UTC)."""
+    first = client.table("messages").select("timestamp").order("timestamp").limit(1).execute().data
+    if not first:
+        log.info("No messages stored; nothing to rebuild")
+        return
+    day = parse_iso_timestamp(first[0]["timestamp"]).date()
+    today = datetime.now(timezone.utc).date()
+    dates: set[str] = set()
+    while day <= today:
+        dates.add(day.isoformat())
+        day += timedelta(days=1)
+    log.info(f"Rebuilding aggregates for {len(dates)} days ({min(dates)} .. {max(dates)})")
+    recompute_aggregates_for_dates(client, dates)
+
+
 def main() -> None:
     if DRY_RUN:
         log.info("=== DRY RUN MODE - No database writes ===")
@@ -333,7 +502,8 @@ def main() -> None:
     client = None
     last_sync_mtime = None
 
-    if not DRY_RUN:
+    # --rebuild-aggregates reads from the DB, so it needs a client even in dry-run mode
+    if not DRY_RUN or REBUILD_AGGREGATES:
         if not supabase_url or not supabase_key:
             log.error("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
             sys.exit(1)
@@ -346,6 +516,15 @@ def main() -> None:
             options=SyncClientOptions(schema=DB_SCHEMA),
         )
 
+    if REBUILD_AGGREGATES:
+        rebuild_all_aggregates(client)
+        log.info("Aggregate rebuild complete!")
+        return
+
+    # Refresh the detected plan every run, even when no session files changed
+    record_plan(client)
+
+    if not DRY_RUN:
         if not FORCE:
             sync = client.table("sync_state").select("*").order("id", desc=True).limit(1).execute()
             if sync.data and sync.data[0].get("last_file_mtime"):
@@ -511,10 +690,11 @@ def main() -> None:
 
     log.info(f"Upserted {msg_count} messages")
 
-    log.info("Upserting daily aggregates...")
-    upsert_batch(client, "daily_aggregates", daily_aggs, "date,project_name,model")
-    upsert_batch(client, "tool_daily_aggregates", tool_aggs, "date,tool_name")
-    log.info(f"Upserted {len(daily_aggs)} daily aggs, {len(tool_aggs)} tool aggs")
+    # Recompute touched days from the DB rather than upserting batch-only totals,
+    # which would overwrite a day's aggregates with a partial count
+    touched_dates = {d["date"] for d in daily_aggs}
+    log.info(f"Recomputing aggregates for {len(touched_dates)} touched days...")
+    recompute_aggregates_for_dates(client, touched_dates)
 
     if all_rate_limits:
         log.info(f"Upserting {len(all_rate_limits)} rate limit events...")

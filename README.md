@@ -115,6 +115,7 @@ In your Supabase project, go to **SQL Editor** and run these files **in order**:
 4. supabase/migrations/005_remove_public_objects.sql -- Cleanup (removes any stale public objects)
 5. supabase/migrations/006_fix_advisor_warnings.sql  -- Resolves Supabase Advisor warnings
 6. supabase/migrations/007_drop_unused_tool_usage.sql -- Drops the unused tool_usage table
+7. supabase/migrations/008_add_plan_to_sync_state.sql -- Stores the auto-detected Claude plan
 ```
 
 > **Note on numbering:** There is no `003_*.sql`. An early `003` migration created
@@ -136,10 +137,16 @@ Edit `.env.local` with your Supabase credentials:
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
-NEXT_PUBLIC_PLAN_TYPE=max5          # or: pro, max20
-NEXT_PUBLIC_PLAN_TOKEN_LIMIT=88000  # pro=44000, max5=88000, max20=220000
+NEXT_PUBLIC_PLAN_TYPE=max5          # fallback only; or: pro, max20, team_standard, team_premium
+NEXT_PUBLIC_PLAN_TOKEN_LIMIT=88000  # optional override; pro=44000, max5=88000, max20=220000, team_standard=55000, team_premium=88000
 NEXT_PUBLIC_PLAN_WINDOW_HOURS=5
+NEXT_PUBLIC_PLAN_MONTHLY_PRICE=     # optional override for the Costs page; defaults per plan
 ```
+
+> **Plan auto-detection:** each sync, `ingest.py` reads your plan (Pro / Max 5x / Max 20x /
+> Team Standard / Team Premium) from the account profile Claude Code caches in `~/.claude.json`
+> and stores it on `sync_state`. The dashboard uses it automatically; `NEXT_PUBLIC_PLAN_TYPE` is
+> only a fallback. Prices and token limits are estimates; override them with the env vars above.
 
 ### Step 6: Install and Run the Dashboard
 
@@ -345,6 +352,7 @@ npx vercel env add SUPABASE_SERVICE_ROLE_KEY production
 npx vercel env add NEXT_PUBLIC_PLAN_TYPE production
 npx vercel env add NEXT_PUBLIC_PLAN_TOKEN_LIMIT production
 npx vercel env add NEXT_PUBLIC_PLAN_WINDOW_HOURS production
+npx vercel env add NEXT_PUBLIC_PLAN_MONTHLY_PRICE production   # optional
 npx vercel --prod
 ```
 
@@ -416,7 +424,7 @@ A: No. It reads files already on your disk. Zero API calls to Anthropic.
 A: Community-estimated token limit for Max5 per 5-hour window. Our analysis shows the actual threshold is dynamic and varies based on cache usage. The dashboard tracks real throttle events instead of guessing.
 
 **Q: Can I use this with Claude Code Pro (not Max)?**
-A: Yes. Change `NEXT_PUBLIC_PLAN_TYPE=pro` and `NEXT_PUBLIC_PLAN_TOKEN_LIMIT=44000` in your `.env.local`.
+A: Yes. The plan (Pro, Max, or Team) is detected automatically on each sync. Override the token limit or price with `NEXT_PUBLIC_PLAN_TOKEN_LIMIT` / `NEXT_PUBLIC_PLAN_MONTHLY_PRICE` if needed.
 
 **Q: Does it work on Linux/Windows?**
 A: Yes. The dashboard (Next.js) works anywhere. The ingestion script works on any OS with Python 3.9+ and access to `~/.claude/projects/`. See [Step 10](#step-10-set-up-scheduled-auto-sync) for platform-specific scheduling instructions.
